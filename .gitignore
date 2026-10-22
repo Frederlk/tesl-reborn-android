@@ -1,0 +1,43 @@
+# Binaries and large artefacts
+*.apk
+*.xapk
+*.obb
+*.so
+*.bin
+*.jar
+*.dex
+base.apk
+bigapk.apk
+gadget.so
+uber-apk-signer.jar
+The+Elder+Scrolls_+Legends_*.xapk
+tesl-reborn*.apk
+tesl-reborn.xapk
+android-14-buildtools/
+# Build / scratch dirs
+work
+work-single
+apkbuild
+hookbuild
+__pycache__
+# Cache / device payloads
+cache/
+versions.json
+files_backup
+files_on_device
+device_protected_files/
+external_files/
+obb_contents
+data/
+patched_classes.dex
+JNIBridge_a.patched.smali
+add-missing-tesl-reborn-features-to-android-hook.json
+requestdump.txt
+log
+log_1
+log_unity
+.DS_Store
+files_backup
+files_on_device
+obb_contents
+tesl-hook*.json

@@ -109,7 +109,7 @@ def append_to_apk(src, dst, extra):
                 # the sizes are known only now, they are patched into the local
                 # header together with the checksum
                 end = fout.tell()
-                fout.seek(offset + 10)
+                fout.seek(offset + 14)
                 fout.write(struct.pack("<III", crc & 0xffffffff, size, size))
                 fout.seek(end)
                 added.append((name, crc & 0xffffffff, size, offset))
