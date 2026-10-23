@@ -144,6 +144,9 @@ adb push ./creds/tesl-login.json \\
 - `build_xapk.py` — builds the APKPure-like XAPK.
 - `restore_cache.py` — recovers bundles from the Windows build and patches the
   platform.
-- `JNIBridge_a.patched.smali` / `patched_classes.dex` — patch source and its
-  prebuilt output.
-- `decompiled/Assembly-CSharp/` — decompiled game reference.
+- `JNIBridge_a.patched.smali` — smali source for the
+  `bitter.jnibridge.JNIBridge$a` patch. `build_apk.py` rebuilds
+  `patched_classes.dex` automatically on each build (via baksmali + smali):
+  extract `classes.dex` from `base.apk`, replace the `JNIBridge$a` class with
+  the committed smali and reassemble smoke-the JNI bridge into
+  Android 14's default-method handling. No proprietary binary is committed.
