@@ -15,7 +15,7 @@ installing it, no further file pushes are needed:
 
 After that first run the game is fully offline: card art, voices and
 translations all load from local files. Auto-login works once a
-`tesl-login.json` is pushed (see *Manual push* below).
+`tesl-login.json` is pushed (see *Manual push* below), or after a successful login with username and password.
 
 ## Prerequisites
 
@@ -24,18 +24,18 @@ translations all load from local files. Auto-login works once a
   (`pip install lief UnityPy`).
 - Java JDK (for `zipalign` and `uber-apk-signer.jar`).
 - Android build-tools 14 (`android-14-buildtools`, must provide `zipalign`).
-- Node.js + `frida-compile` (from `android/node_modules`, created with
+- Node.js + `frida-compile` (from `node_modules`, created with
   `npm install` in that directory).
 - A Frida gadget for Android arm64 v8a (17.24.3, the file written as
   `gadget.so`).
 - Minimum Android: 10 (Android 14 was the development target).
 - Base artefacts:
-  - `android/base.apk`: a working arm64 / IL2CPP Android base APK of the
+  - `base.apk`: a working arm64 / IL2CPP Android base APK of the
     game (renamed to `base.apk`).
-  - `android/main.11009.com.bethsoft.theelderscrollslegends.obb`: the
+  - `main.11009.com.bethsoft.theelderscrollslegends.obb`: the
     original OBB, extracted from the original XAPK. Also copy it from
     `Android/obb/…` of the APKPure package.
-  - `android/versions.json`: the bundle inventory. Extract it from
+  - `versions.json`: the bundle inventory. Extract it from
     `assets/versions.json` inside the OBB.
   - an original XAPK (e.g. the APKPure one, version code 11009) to harvest
     `icon.png` + `manifest.json`.
@@ -44,7 +44,7 @@ translations all load from local files. Auto-login works once a
 
 ## Build chain
 
-Every command below runs from the `android/` directory, in order.
+Every command below runs from the `` directory, in order.
 
 ### 1. Compile the hook
 
@@ -59,7 +59,7 @@ node node_modules/.bin/frida-compile hook.ts -o hook.js
 python3 build_apk.py base.apk tesl-reborn-patched.apk
 ```
 `build_apk.py` needs `base.apk`, `gadget.so`, `patched_classes.dex` and
-`uber-apk-signer.jar` in `android/`. `patched_classes.dex` is a prebuilt
+`uber-apk-signer.jar` in ``. `patched_classes.dex` is a prebuilt
 artefact in the repo (originally `bitter.jnibridge.JNIBridge$a` patched to
 avoid the Android 16 default-method dispatch crash; see the Source files note).
 
@@ -113,7 +113,7 @@ adb logcat -d -s Unity:E     | tail -20
 adb shell screencap -p /sdcard/x.png && adb pull /sdcard/x.png /tmp/x.png
 ```
 
-Credential file (push once, never commit it):
+Credential file (push once, never commit it; useful for autologin just after installing):
 
 ```bash
 adb push ./creds/tesl-login.json \\
@@ -149,4 +149,4 @@ adb push ./creds/tesl-login.json \\
   `patched_classes.dex` automatically on each build (via baksmali + smali):
   extract `classes.dex` from `base.apk`, replace the `JNIBridge$a` class with
   the committed smali and reassemble smoke-the JNI bridge into
-  Android 14's default-method handling. No proprietary binary is committed.
+  Android 14's default-method handling.
