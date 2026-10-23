@@ -1346,6 +1346,8 @@ Il2Cpp.perform(() => {
 
     find(name: string): any { return this.entries.get(name) ?? null; }
 
+    list(): string[] { return [...this.entries.keys()]; }
+
     read(entry: any, from: number, length: number): ArrayBuffer {
       this.file.seek(this.dataOffset(entry) + from);
       return this.file.readBytes(length);
@@ -1376,7 +1378,8 @@ Il2Cpp.perform(() => {
     if (!zip) return;
     const obb = zip.find("assets/tesl-payload/obb.bin");
     const cache = zip.find("assets/tesl-payload/cache.bin");
-    if (!obb && !cache) { log("payload: the apk carries no payload"); return; }
+    const perFileEntries = zip.list().filter(e => e.startsWith("assets/tesl-payload/UnityCache/Shared/"));
+    if (!obb && !cache && !perFileEntries.length) { log("payload: the apk carries no payload"); return; }
 
     if (obb) {
       const target = obbPath();
@@ -1420,8 +1423,27 @@ Il2Cpp.perform(() => {
         }
         offset += f.size;
       }
-      log(`payload: ${written} of ${count} cache files written`);
-    const versions = zip.find("assets/tesl-payload/versions.json");
+          log(`payload: ${written} of ${count} cache files written (packed)`);
+    } else {
+      const prefix = "assets/tesl-payload/UnityCache/Shared/";
+      const perEntry = (zip as any).list().filter((e:string) => e.startsWith(prefix));
+      if (perEntry.length) {
+        const tgt = `${persistentPath()}/UnityCache/Shared`;
+        let written = 0;
+        for (const name of perEntry) {
+          const rel = name.substring(prefix.length);
+          const path = `${tgt}/${rel}`;
+          if (!fileExists(path)) {
+            const e = zip.find(name);
+            makeDirectory(path.substring(0, path.lastIndexOf("/")));
+            zip.copy(e, path);
+            written++;
+          }
+        }
+        log(`payload: ${written} of ${perEntry.length} cache files written (per-file)`);
+      }
+    }
+        const versions = zip.find("assets/tesl-payload/versions.json");
     if (versions) {
       const target = `${persistentPath()}/versions.json`;
       if (!fileExists(target)) {
@@ -1430,17 +1452,35 @@ Il2Cpp.perform(() => {
         zip.copy(versions, target);
       }
     }
-    }
   });
 
   // The path of the APK of the game, taken from the streaming assets path.
+  // Discover the package's APK even when an OBB is installed.  On Android
+  // both Application.dataPath and streamingAssetsPath report the OBB's path
+  // once an OBB is present (that OBB would then be treated as the APK and
+  // the embedded payload would be invisible).  The APK is only reliably
+  // findable as a mapped module in /proc/self/maps.
   function apkPath(): string {
+    try {
+      const f = new File("/proc/self/maps", "rb");
+      let line = "";
+      let fallback = "";
+      while ((line = f.readLine()) !== "") {
+        const matches = line.match(/(\/[^\s]+\.apk)/g);
+        if (matches) for (const cand of matches) {
+          if (cand.indexOf("base.apk") >= 0) { try { f.close(); } catch (_) {}; return cand; }
+          if (!fallback) fallback = cand;
+        }
+      }
+      try { f.close(); } catch (_) {}
+      if (fallback) return fallback;
+    } catch (_) {}
     try {
       const path = String((ucls("UnityEngine.Application").method("get_streamingAssetsPath") as any)
         .invoke()?.content ?? "");
       const m = path.match(/^jar:file:\/\/(.*)!.*$/);
       return m ? m[1] : "";
-    } catch (_) { return ""; }
+    } catch { return ""; }
   }
 
   // The place where the game expects the OBB of the package.
