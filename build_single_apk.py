@@ -195,6 +195,11 @@ def main():
             sys.exit("%s is missing" % args.obb)
         shutil.copyfile(args.obb, os.path.join(payload, "obb.bin"))
         print("payload: the OBB (%s)" % human(os.path.getsize(args.obb)))
+    versions_src = os.path.join(HERE, "versions.json")
+    if os.path.isfile(versions_src):
+        shutil.copyfile(versions_src, os.path.join(payload, "versions.json"))
+        print("payload: versions.json (%s)" % human(os.path.getsize(versions_src)))
+
     if not args.no_cache:
         if not os.path.isdir(args.cache):
             sys.exit("%s is missing, run restore_cache.py first" % args.cache)

@@ -28,18 +28,18 @@ restore use the `Shared` level.
 - Python 3 (3.11+ recommended) with `lief` and `UnityPy` installed
   (`pip install lief UnityPy`).
 - Java JDK (for `zipalign` and `uber-apk-signer.jar`).
-- Android SDK build-tools 14 (`android/android-14-buildtools` or PATH) that
+- Android SDK build-tools 14 (`android-14-buildtools` or PATH) that
   provides `zipalign`.
 - Node.js + `frida-compile` ("`cd android && npm install`") and a Frida
   gadget for Android arm64 v8a (17.24.3 for the 4.x hook layout).
 - The minimum Android version is 10 (Android 14 was the test target).
 - Base artefacts:
-  - `android/base.apk`: a working arm64 / IL2CPP Android base APK of the
+  - `base.apk`: a working arm64 / IL2CPP Android base APK of the
     game (renamed to `base.apk`).
   - `main.11009.com.bethsoft.theelderscrollslegends.obb`: the original OBB,
     extracted from the original XAPK (also shipped in the build output as
-    `main.11009…obb`). Place it at `android/main.11009…obb`.
-  - `android/versions.json`: the bundle inventory. The simplest way to
+    `main.11009…obb`). Place it at `main.11009.com.bethsoft.theelderscrollslegends.obb`.
+  - `versions.json`: the bundle inventory. The simplest way to
     obtain it is to extract `assets/versions.json` from the OBB above.
   - An original XAPK package (e.g. the APKPure one for version code 11009)
     to harvest `icon.png` + `manifest.json` for the new XAPK.
@@ -55,13 +55,11 @@ restore use the `Shared` level.
 - Android SDK build-tools (`zipalign`).
 - `frida-compile` (Node.js) and the frida-gadget for Android arm64 (17.24.3).
 - The Android port is built for `arm64-v8a` only. It works on a Pixel 8 Pro but does not on an Ulefone Armor 9 (Android 10).
-- A working Android base APK of the game (`base.apk`, IL2CPP / arm64) placed (and renamed) at `android/base.apk`.
+- A working Android base APK of the game (`base.apk`, IL2CPP / arm64) placed (and renamed) at `base.apk`.
 - The original XAPK package containing the OBB (e.g. `The+Elder+Scrolls_+Legends_2.17.0_APKPure.xapk` from https://d.apkpure.com/b/XAPK/com.bethsoft.theelderscrollslegends?versionCode=11009 ), and its contents extracted as `base.apk` and `main.11009.com.bethsoft.theelderscrollslegends.obb`
 - The Windows build of the game (only tested against the Steam version, but it should work with the Bethesda launcher version as well)
 
 ## Build chain
-
-All steps run from the `android/` directory. They must be done in order.
 
 ### 1. Compile the hook
 
@@ -176,18 +174,18 @@ restore use the `Shared` level.
 - Python 3 (3.11+ recommended) with `lief` and `UnityPy` installed
   (`pip install lief UnityPy`).
 - Java JDK (for `zipalign` and `uber-apk-signer.jar`).
-- Android SDK build-tools 14 (`android/android-14-buildtools` or PATH) that
+- Android SDK build-tools 14 (`android-14-buildtools` or PATH) that
   provides `zipalign`.
 - Node.js + `frida-compile` ("`cd android && npm install`") and a Frida
   gadget for Android arm64 v8a (17.24.3 for the 4.x hook layout).
 - The minimum Android version is 10 (Android 14 was the test target).
 - Base artefacts:
-  - `android/base.apk`: a working arm64 / IL2CPP Android base APK of the
+  - `base.apk`: a working arm64 / IL2CPP Android base APK of the
     game (renamed to `base.apk`).
   - `main.11009.com.bethsoft.theelderscrollslegends.obb`: the original OBB,
     extracted from the original XAPK (also shipped in the build output as
-    `main.11009…obb`). Place it at `android/main.11009…obb`.
-  - `android/versions.json`: the bundle inventory. The simplest way to
+    `main.11009…obb`). Place it at `main.11009…obb`.
+  - `versions.json`: the bundle inventory. The simplest way to
     obtain it is to extract `assets/versions.json` from the OBB above.
   - An original XAPK package (e.g. the APKPure one for version code 11009)
     to harvest `icon.png` + `manifest.json` for the new XAPK.
@@ -203,13 +201,13 @@ restore use the `Shared` level.
 - Android SDK build-tools (`zipalign`).
 - `frida-compile` (Node.js) and the frida-gadget for Android arm64 (17.24.3).
 - The Android port is built for `arm64-v8a` only. It works on a Pixel 8 Pro but does not on an Ulefone Armor 9 (Android 10).
-- A working Android base APK of the game (`base.apk`, IL2CPP / arm64) placed (and renamed) at `android/base.apk`.
+- A working Android base APK of the game (`base.apk`, IL2CPP / arm64) placed (and renamed) at `base.apk`.
 - The original XAPK package containing the OBB (e.g. `The+Elder+Scrolls_+Legends_2.17.0_APKPure.xapk` from https://d.apkpure.com/b/XAPK/com.bethsoft.theelderscrollslegends?versionCode=11009 ), and its contents extracted as `base.apk` and `main.11009.com.bethsoft.theelderscrollslegends.obb`
 - The Windows build of the game (only tested against the Steam version, but it should work with the Bethesda launcher version as well)
 
 ## Build chain
 
-All steps run from the `android/` directory. They must be done in order.
+All steps run from the `` directory. They must be done in order.
 
 ### 1. Compile the hook
 
@@ -303,19 +301,10 @@ adb shell screencap -p /sdcard/x.png ; adb pull /sdcard/x.png /tmp
 
 ## Source files
 
-- `android/hook.ts`  — the Frida / IL2CPP hook (compiled with `frida-compile`).
-- `android/build_apk.py`   — injects gadget + hook into `base.apk`.
-- `android/build_single_apk.py` — appends obb and/or cache to the patched APK (above).
-- `android/build_xapk.py`  — APKPure-like XAPK.
-- `android/restore_cache.py` — recovers bundles from the Windows build and patches the platform.
+- `hook.ts`  — the Frida / IL2CPP hook (compiled with `frida-compile`).
+- `build_apk.py`   — injects gadget + hook into `base.apk`.
+- `build_single_apk.py` — appends obb and/or cache to the patched APK (above).
+- `build_xapk.py`  — APKPure-like XAPK.
+- `restore_cache.py` — recovers bundles from the Windows build and patches the platform.
 - `decompiled/Assembly-CSharp/` — decompiled game reference.
 
-
-## Source files
-
-- `android/hook.ts`  — the Frida / IL2CPP hook (compiled with `frida-compile`).
-- `android/build_apk.py`   — injects gadget + hook into `base.apk`.
-- `android/build_single_apk.py` — appends obb and/or cache to the patched APK (above).
-- `android/build_xapk.py`  — APKPure-like XAPK.
-- `android/restore_cache.py` — recovers bundles from the Windows build and patches the platform.
-- `decompiled/Assembly-CSharp/` — decompiled game reference.
