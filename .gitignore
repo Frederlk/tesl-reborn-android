@@ -30,7 +30,6 @@ external_files/
 obb_contents
 data/
 patched_classes.dex
-JNIBridge_a.patched.smali
 add-missing-tesl-reborn-features-to-android-hook.json
 requestdump.txt
 log
