@@ -1,8 +1,10 @@
+// @ts-nocheck
 // TESL Reborn client hooks for the Android (IL2CPP) build.
 // Mirrors the patches of TeslRebornPlugin 1.3.1 (BepInEx/Harmony, Windows):
 // the connectivity patches (config redirect, auth bypass, HTTP) plus the
 // feature patches (rewards refresh, match history, deck statistics, news,
-// custom titles, translations, credits and the title banners).
+// custom titles, translations, credits, title banners and player title
+// banners).
 import "frida-il2cpp-bridge";
 declare const console: { log(...a: any[]): void };
 
@@ -126,8 +128,7 @@ const CREATE_ACCOUNT = false;            // the plugin sends false; flip to true
 
 Il2Cpp.perform(() => {
   const img = Il2Cpp.domain.assembly("Assembly-CSharp").image;
-  log(`attached, Unity ${Il2Cpp.unityVersion}, hook build plugin-parity-2`);
-
+  log(`attached, Unity ${Il2Cpp.unityVersion}, hook build plugin-parity-3`);
   // --- shared: the Steam-style requests the server accepts ---
   const utils = cls(img, "SparkleServices.HTTPUtils");
   const authResult = nested(img, "AuthBase", "AuthResult");
@@ -440,6 +441,23 @@ Il2Cpp.perform(() => {
             const path = String((catalog.method("GetVersionJsonPath") as any).invoke()?.content ?? "");
             log(`storage modes: loading ${path}`);
             call(versionInfo, "Load", Il2Cpp.string(path));
+            // On Android the unity file system rejects the JSON (result = FAILED, 0 parsed)
+            // even though the file is perfectly readable. Retry by feeding the exact JSON
+            // through the IL2CPP LoadFromMemory, which deserializes without going through
+            // the PlatformAllowsBundleManifest gate.
+            if (count() === 0) {
+              try {
+                const fileClass = Il2Cpp.corlib.class("System.IO.File");
+                const exists = (fileClass.method("Exists") as any).invoke(Il2Cpp.string(path));
+                if (Boolean(exists)) {
+                  const text = String((fileClass.method("ReadAllText") as any).invoke(Il2Cpp.string(path))?.content ?? "");
+                  if (text.length > 0) {
+                    (versionInfo.method("LoadFromMemory") as any).invoke(Il2Cpp.string(text));
+                    log(`storage modes: LoadFromMemory added ${count()} entries (path failed)`);
+                  }
+                }
+              } catch (e) { log(`storage modes: recovery failed: ${e}`); }
+            }
           }
           log(`AssetBundleManager.Initialize: version info entries ${before} -> ${count()}`);
         } catch (e) { log(`storage mode fill error: ${e}`); }
@@ -1281,111 +1299,11 @@ Il2Cpp.perform(() => {
 
   // ---------------------------------------------------------------------
   // A single APK can carry the streaming assets (the OBB of the package) and
-  // the asset bundles that are not part of the OBB.  They are written to the
   // places where the game expects them on the first start:
   //   * the OBB next to the other packages of the device
   //   * the bundles into the cache of Unity
   // ---------------------------------------------------------------------
-  section("payload from the apk", () => {
-    const apk = apkPath();
-    if (!apk) { log("payload: the apk was not found"); return; }
-    const zip = new ZipReader(apk);
-    if (!zip) return;
-    const obb = zip.find("assets/tesl-payload/obb.bin");
-    const cache = zip.find("assets/tesl-payload/cache.bin");
-    if (!obb && !cache) { log("payload: the apk carries no payload"); return; }
-
-    if (obb) {
-      const target = obbPath();
-      if (target && !fileExists(target)) {
-        log(`payload: writing the streaming assets to ${target}`);
-        makeDirectory(target.substring(0, target.lastIndexOf("/")));
-        zip.copy(obb, target);
-        log("payload: the streaming assets are ready");
-      }
-    }
-    if (cache) {
-      const target = `${persistentPath()}/UnityCache/Shared`;
-      const head = new DataView(zip.read(cache, 0, 12));
-      const count = head.getUint32(8, true);
-      let at = 12;
-      const files: { name: string; size: number }[] = [];
-      for (let i = 0; i < count; i++) {
-        const len = new DataView(zip.read(cache, at, 2)).getUint16(0, true);
-        at += 2;
-        const name = readString(zip.read(cache, at, len));
-        at += len;
-        const size = readUInt64(new DataView(zip.read(cache, at, 8)));
-        at += 8;
-        files.push({ name, size });
-      }
-      let offset = at;
-      let written = 0;
-      for (const f of files) {
-        const path = `${target}/${f.name}`;
-        if (!fileExists(path)) {
-          makeDirectory(path.substring(0, path.lastIndexOf("/")));
-          const out = new File(path, "wb");
-          let done = 0;
-          while (done < f.size) {
-            const n = Math.min(4 * 1024 * 1024, f.size - done);
-            out.write(zip.read(cache, offset + done, n));
-            done += n;
-          }
-          out.close();
-          written++;
-        }
-        offset += f.size;
-      }
-      log(`payload: ${written} of ${count} cache files written`);
-    }
-  });
-
-  // The path of the APK of the game, taken from the streaming assets path.
-  function apkPath(): string {
-    try {
-      const path = String((ucls("UnityEngine.Application").method("get_streamingAssetsPath") as any)
-        .invoke()?.content ?? "");
-      const m = path.match(/^jar:file:\/\/(.*)!.*$/);
-      return m ? m[1] : "";
-    } catch (_) { return ""; }
-  }
-
-  // The place where the game expects the OBB of the package.
-  function obbPath(): string {
-    const persistent = persistentPath();      // /sdcard/Android/data/<pkg>/files
-    const android = persistent.replace(/\/data\/[^/]+\/files$/, "");
-    return `${android}/obb/com.bethsoft.theelderscrollslegends/main.11009.com.bethsoft.theelderscrollslegends.obb`;
-  }
-
-  function fileExists(path: string): boolean {
-    try {
-      return Boolean((Il2Cpp.corlib.class("System.IO.File").method("Exists") as any)
-        .invoke(Il2Cpp.string(path)));
-    } catch (_) { return false; }
-  }
-
-  function makeDirectory(path: string) {
-    try {
-      (Il2Cpp.corlib.class("System.IO.Directory").method("CreateDirectory") as any)
-        .invoke(Il2Cpp.string(path));
-    } catch (e) { log(`payload: cannot create ${path}: ${e}`); }
-  }
-
-  function readString(buffer: ArrayBuffer): string {
-    const bytes = new Uint8Array(buffer);
-    let text = "";
-    for (let i = 0; i < bytes.length; i++) text += String.fromCharCode(bytes[i]);
-    return text;
-  }
-
-  function readUInt64(view: DataView): number {
-    const low = view.getUint32(0, true);
-    const high = view.getUint32(4, true);
-    return low + high * 4294967296;
-  }
-
-  // A small reader for the zip archives: the payload of the APK is stored
+    // A small reader for the zip archives: the payload of the APK is stored
   // without a compression, so the data can be copied out of it as it is.
   class ZipReader {
     private file: any = null;
@@ -1450,6 +1368,115 @@ Il2Cpp.perform(() => {
       return entry.offset + 30 + head.getUint16(26, true) + head.getUint16(28, true);
     }
   }
+
+  section("payload from the apk", () => {
+    const apk = apkPath();
+    if (!apk) { log("payload: the apk was not found"); return; }
+    const zip = new ZipReader(apk);
+    if (!zip) return;
+    const obb = zip.find("assets/tesl-payload/obb.bin");
+    const cache = zip.find("assets/tesl-payload/cache.bin");
+    if (!obb && !cache) { log("payload: the apk carries no payload"); return; }
+
+    if (obb) {
+      const target = obbPath();
+      if (target && !fileExists(target)) {
+        log(`payload: writing the streaming assets to ${target}`);
+        makeDirectory(target.substring(0, target.lastIndexOf("/")));
+        zip.copy(obb, target);
+        log("payload: the streaming assets are ready");
+      }
+    }
+    if (cache) {
+      const target = `${persistentPath()}/UnityCache/Shared`;
+      const head = new DataView(zip.read(cache, 0, 12));
+      const count = head.getUint32(8, true);
+      let at = 12;
+      const files: { name: string; size: number }[] = [];
+      for (let i = 0; i < count; i++) {
+        const len = new DataView(zip.read(cache, at, 2)).getUint16(0, true);
+        at += 2;
+        const name = readString(zip.read(cache, at, len));
+        at += len;
+        const size = readUInt64(new DataView(zip.read(cache, at, 8)));
+        at += 8;
+        files.push({ name, size });
+      }
+      let offset = at;
+      let written = 0;
+      for (const f of files) {
+        const path = `${target}/${f.name}`;
+        if (!fileExists(path)) {
+          makeDirectory(path.substring(0, path.lastIndexOf("/")));
+          const out = new File(path, "wb");
+          let done = 0;
+          while (done < f.size) {
+            const n = Math.min(4 * 1024 * 1024, f.size - done);
+            out.write(zip.read(cache, offset + done, n));
+            done += n;
+          }
+          out.close();
+          written++;
+        }
+        offset += f.size;
+      }
+      log(`payload: ${written} of ${count} cache files written`);
+    const versions = zip.find("assets/tesl-payload/versions.json");
+    if (versions) {
+      const target = `${persistentPath()}/versions.json`;
+      if (!fileExists(target)) {
+        log("payload: writing versions.json");
+        makeDirectory(target.substring(0, target.lastIndexOf("/")));
+        zip.copy(versions, target);
+      }
+    }
+    }
+  });
+
+  // The path of the APK of the game, taken from the streaming assets path.
+  function apkPath(): string {
+    try {
+      const path = String((ucls("UnityEngine.Application").method("get_streamingAssetsPath") as any)
+        .invoke()?.content ?? "");
+      const m = path.match(/^jar:file:\/\/(.*)!.*$/);
+      return m ? m[1] : "";
+    } catch (_) { return ""; }
+  }
+
+  // The place where the game expects the OBB of the package.
+  function obbPath(): string {
+    const persistent = persistentPath();      // /sdcard/Android/data/<pkg>/files
+    const android = persistent.replace(/\/data\/[^/]+\/files$/, "");
+    return `${android}/obb/com.bethsoft.theelderscrollslegends/main.11009.com.bethsoft.theelderscrollslegends.obb`;
+  }
+
+  function fileExists(path: string): boolean {
+    try {
+      return Boolean((Il2Cpp.corlib.class("System.IO.File").method("Exists") as any)
+        .invoke(Il2Cpp.string(path)));
+    } catch (_) { return false; }
+  }
+
+  function makeDirectory(path: string) {
+    try {
+      (Il2Cpp.corlib.class("System.IO.Directory").method("CreateDirectory") as any)
+        .invoke(Il2Cpp.string(path));
+    } catch (e) { log(`payload: cannot create ${path}: ${e}`); }
+  }
+
+  function readString(buffer: ArrayBuffer): string {
+    const bytes = new Uint8Array(buffer);
+    let text = "";
+    for (let i = 0; i < bytes.length; i++) text += String.fromCharCode(bytes[i]);
+    return text;
+  }
+
+  function readUInt64(view: DataView): number {
+    const low = view.getUint32(0, true);
+    const high = view.getUint32(4, true);
+    return low + high * 4294967296;
+  }
+
 
   // ---------------------------------------------------------------------
   // Auto login: the Linux rebuild of the client remembers the credentials of
@@ -1594,6 +1621,102 @@ Il2Cpp.perform(() => {
         if (args[1].toInt32() !== RARITY_LEGENDARY) return;
         args[1] = ptr(0);
         log("UIResourceManager: legendary title banner -> common");
+      },
+    });
+  });
+
+  // ---------------------------------------------------------------------
+  // Player title patches (TeslRebornPlugin.Patch.Player.*): the custom
+  // "TESL Reborn" titles are legendary, so their banners fall back to the
+  // common one and get the gold colour, and the legendary rarity filter is
+  // revealed in the profile title list.
+  // ---------------------------------------------------------------------
+  section("player profile titles (legendary filter)", () => {
+    const ppt = cls(img, "PlayerProfileTitles");
+    Interceptor.attach(ppt.method("Awake").virtualAddress, {
+      onEnter(args) {
+        try {
+          const self = new Il2Cpp.Object(args[0]);
+          const t = call(self, "get_transform");
+          if (isNull(t)) return;
+          const found = call(t, "Find", Il2Cpp.string("Layout_Filters/Widget_Filters_Rarity/KEEP_HIDDEN_Item_Filter_Legendary"));
+          if (isNull(found)) return;
+          const go = call(found, "get_gameObject");
+          if (!isNull(go)) (go.method("SetActive") as any).invoke(true);
+          log("PlayerProfileTitles: revealed the legendary rarity filter");
+        } catch (e) { log(`player profile titles awake failed: ${e}`); }
+      },
+    });
+  });
+
+  section("player profile title item (legendary colour)", () => {
+    const ppti = cls(img, "PlayerProfileTitleItem");
+    Interceptor.attach(ppti.method("UpdateUi").virtualAddress, {
+      onEnter(args) { this.self = args[0]; },
+      onLeave() {
+        try {
+          const self = new Il2Cpp.Object(this.self);
+          const titleData = self.field<Il2Cpp.Object>("_titleData").value;
+          if (isNull(titleData)) return;
+          const rarity = enumVal(titleData.field<any>("Rarity").value);
+          if (rarity !== RARITY_LEGENDARY) return;
+          const bg = self.field<Il2Cpp.Object>("BackgroundImage").value;
+          if (isNull(bg)) return;
+          const uiRes = (ucls("UIResourceManager").method("get_Instance") as any).invoke();
+          if (!isNull(uiRes)) {
+            const sprite = (uiRes.method("GetTitleBannerSprite") as any).invoke(enumBox(cls(img, "SPTESL.CardRarity"), RARITY_LEGENDARY));
+            if (!isNull(sprite)) (bg.method("set_overrideSprite") as any).invoke(sprite);
+          }
+          (bg.method("set_color") as any).invoke(1, 0.75, 0, 1);
+          log("PlayerProfileTitleItem: coloured a legendary title");
+        } catch (e) { log(`player profile title item update failed: ${e}`); }
+      },
+    });
+  });
+
+  section("player info panel (legendary title banner)", () => {
+    const pip = cls(img, "PlayerInfoPanel");
+    Interceptor.attach(pip.method("UpdateUi").virtualAddress, {
+      onEnter(args) { this.self = args[0]; },
+      onLeave() {
+        try {
+          const self = new Il2Cpp.Object(this.self);
+          const banners = self.field<Il2Cpp.Array<Il2Cpp.Object>>("_titleBanners").value;
+          if (isNull(banners)) return;
+          let matchPlayerData: Il2Cpp.Object | null = null;
+          try { matchPlayerData = self.field<Il2Cpp.Object>("_matchPlayerData").value; } catch (_) {}
+          if (isNull(matchPlayerData)) return;
+          const titleName = String(matchPlayerData.field<Il2Cpp.String>("Title").value?.content ?? "");
+          if (!titleName) return;
+          const gm = (cls(img, "SPTESL.GameManager").method("get_Instance") as any).invoke() as Il2Cpp.Object;
+          if (isNull(gm)) return;
+          const titles = gm.field<Il2Cpp.Object>("Config").value?.field<Il2Cpp.Object>("Titles").value;          if (isNull(titles)) return;
+          let found: Il2Cpp.Object | null = null;
+          const count = Number((titles.method("get_Count") as any).invoke());
+          for (let i = 0; i < count; i++) {
+            const t = titles.method("get_Item", 1).invoke(i) as Il2Cpp.Object;
+            if (isNull(t)) continue;
+            const name = ((t.field<any>("ResourceId").value as Il2Cpp.ValueType).field("UniqueName").value as Il2Cpp.String)?.content;
+            if (name === titleName) { found = t; break; }
+          }
+          if (isNull(found)) return;
+          const rarity = enumVal(found.field<any>("Rarity").value);
+          if (rarity !== RARITY_LEGENDARY) return;
+          log(`PlayerInfoPanel: legendary title ${titleName}`);
+          try {
+            const legendaryBanner = banners.get(RARITY_LEGENDARY);
+            if (!isNull(legendaryBanner)) {
+              const go = call(legendaryBanner, "get_gameObject");
+              if (!isNull(go)) (go.method("SetActive") as any).invoke(false);
+            }
+          } catch (_) {}
+          const commonBanner = banners.get(0);
+          if (!isNull(commonBanner)) {
+            const go = call(commonBanner, "get_gameObject");
+            if (!isNull(go)) (go.method("SetActive") as any).invoke(true);
+            (commonBanner.method("set_color") as any).invoke(1, 0.75, 0, 1);
+          }
+        } catch (e) { log(`player info panel update failed: ${e}`); }
       },
     });
   });

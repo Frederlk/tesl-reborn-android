@@ -140,8 +140,15 @@ def main():
         cmd = ["adb"]
         if args.serial:
             cmd += ["-s", args.serial]
-        subprocess.check_call(cmd + ["push", CACHE, DEVICE_CACHE + "/"])
-        print("pushed to", DEVICE_CACHE)
+        # the bundles live in the "Shared" cache of Unity: the cache folder is
+        # <persistent data>/UnityCache/Shared/<bundle name>/<hash>/__data.  adb
+        # push copies the *contents* of CACHE, so the "Shared" folder has to be
+        # created here (a missing Shared folder means Unity never finds the
+        # entries and tries to download them from the dead CDN).
+        target = DEVICE_CACHE + "/Shared/"
+        subprocess.check_call(cmd + ["shell", "mkdir", "-p", target])
+        subprocess.check_call(cmd + ["push", CACHE + "/.", target])
+        print("pushed to", target)
 
 
 if __name__ == "__main__":

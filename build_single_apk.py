@@ -198,15 +198,31 @@ def main():
     if not args.no_cache:
         if not os.path.isdir(args.cache):
             sys.exit("%s is missing, run restore_cache.py first" % args.cache)
-        count, size = build_cache(args.cache, os.path.join(payload, "cache.bin"))
-        print("payload: %d cache files (%s)" % (count, human(size)))
+        # include cache files as individual entries (not packed into cache.bin)
+        cache_count = 0
+        cache_size = 0
+        for root, _, names in os.walk(args.cache):
+            for name in names:
+                path = os.path.join(root, name)
+                relpath = os.path.relpath(path, args.cache)
+                entry_name = "assets/tesl-payload/UnityCache/Shared/%s" % relpath
+                # store in payload dir for append_to_apk
+                target = os.path.join(payload, "UnityCache", "Shared", relpath)
+                os.makedirs(os.path.dirname(target), exist_ok=True)
+                shutil.copyfile(path, target)
+                cache_count += 1
+                cache_size += os.path.getsize(path)
+        print("payload: %d cache files (%s)" % (cache_count, human(cache_size)))
 
     # the new APK: the files of the patched APK keep their place, the payload
     # is appended, so the native libraries stay aligned
     unsigned = os.path.join(args.work, "unsigned.apk")
     payload_files = {}
-    for name in sorted(os.listdir(payload)):
-        payload_files["%s/%s" % (PAYLOAD, name)] = os.path.join(payload, name)
+    for root, _, names in os.walk(payload):
+        for name in names:
+            path = os.path.join(root, name)
+            relpath = os.path.relpath(path, payload)
+            payload_files["%s/%s" % (PAYLOAD, relpath)] = path
     append_to_apk(args.apk, unsigned, payload_files)
 
     # sign (the same debug key as the other builds); zipalign is skipped, it
