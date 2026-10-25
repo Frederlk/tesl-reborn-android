@@ -142,7 +142,7 @@ const CREATE_ACCOUNT = false;            // the plugin sends false; flip to true
 
 Il2Cpp.perform(() => {
   const img = Il2Cpp.domain.assembly("Assembly-CSharp").image;
-  log(`attached, Unity ${Il2Cpp.unityVersion}, hook build plugin-parity-7`);
+  log(`attached, Unity ${Il2Cpp.unityVersion}, hook build plugin-parity-8`);
   // --- shared: the Steam-style requests the server accepts ---
   const utils = cls(img, "SparkleServices.HTTPUtils");
   const authResult = nested(img, "AuthBase", "AuthResult");
@@ -937,6 +937,185 @@ Il2Cpp.perform(() => {
         onLeave() { schedule(1000, () => refreshDeckStats(true)); },
       });
     }
+  });
+
+  // ---------------------------------------------------------------------
+  // tesl-decks deck import (TeslDecks.DeckImport): ImportDeckFromClipboardPatch and SetArtTypeHashPatch.
+  // The code pasted from the tesl-decks site may end in ":name:art-id" (or the older "~name~b:art-id").
+  // ---------------------------------------------------------------------
+  section("deck import (tesl-decks)", () => {
+    const ART_PREFIX = "DeckArt_";
+    const BANNER_TOKEN = /^(?<name>.*)~b:(?<id>([a-z0-9]+(-[a-z0-9]+)*)?)$/s;
+    const ART_ID = /^[a-z0-9]+(-[a-z0-9]+)*$/;
+
+    // DeckCodeSuffix.TryParse, same branches as the desktop plugin.
+    function tryParse(raw: string | null): { name: string; bannerId: string | null } | null {
+      const code = raw == null ? null : raw.trim();
+      if (code == null) return null;
+      const colon = code.indexOf(":"), tilde = code.indexOf("~");
+      const at = colon < 0 ? tilde : tilde < 0 ? colon : Math.min(colon, tilde);
+      if (at < 0) return null;
+      const text = code.substring(at + 1);
+      if (code[at] === ":") {
+        const last = text.lastIndexOf(":");
+        const tail = text.substring(last + 1);
+        if (last >= 0 && (tail === "" || ART_ID.test(tail))) return { name: text.substring(0, last), bannerId: tail === "" ? null : tail };
+        return { name: text, bannerId: null };
+      }
+      const m = BANNER_TOKEN.exec(text);
+      if (m) return { name: m.groups!.name, bannerId: m.groups!.id === "" ? null : m.groups!.id };
+      return { name: text, bannerId: null };
+    }
+
+    // DeckCodeSuffix.Kebab: underscores become dashes, an upper-case letter after a lower-case letter or digit gets a dash before it.
+    function kebab(member: string): string {
+      const t = member.replace(/_/g, "-");
+      let o = "";
+      for (let i = 0; i < t.length; i++) {
+        const c = t[i];
+        if (i > 0 && c >= "A" && c <= "Z") {
+          const p = t[i - 1];
+          if ((p >= "a" && p <= "z") || (p >= "0" && p <= "9")) o += "-";
+        }
+        o += c;
+      }
+      return o.toLowerCase();
+    }
+
+    // A managed member that may be a field or a property.
+    function member(o: any, name: string): any {
+      try { return o.field(name).value; } catch (_) { return call(o, "get_" + name); }
+    }
+    function listItems(list: any): any[] {
+      const out: any[] = [];
+      if (isNull(list)) return out;
+      const size = Number(list.field("_size").value);
+      const arr = list.field("_items").value;
+      for (let i = 0; i < size; i++) out.push(arr.get(i));
+      return out;
+    }
+    const idKey = (v: any): string => BigInt(v.toString()).toString();   // an Int64 field (decimal) and a long argument (hex pointer) give the same key
+    const textOf = (s: any): string => (isNull(s) ? "" : String(s.content ?? ""));
+
+    const inventoryClass = cls(img, "SparkleServices.Inventory");
+    const importMethod = inventoryClass.methods.find(m => m.name === "ImportDeckFromClipboard" && m.parameterCount === 0);
+    const setArtMethod = inventoryClass.methods.find(m => m.name === "SetArtTypeHash" && m.parameterCount === 2);
+    const uniClipboard = (() => { try { return cls(img, "UniClipboard"); } catch (_) { return null; } })();
+    const deckUtils = (() => { try { return cls(img, "UIDeckUtils"); } catch (_) { return null; } })();
+    const gameManager = (() => { try { return cls(img, "GameManager"); } catch (_) { return null; } })();
+    const resourceId = (() => { try { return cls(img, "UniqueResourceId"); } catch (_) { return null; } })();
+    if (!uniClipboard) log("deck import: UniClipboard not found, names and banners are not applied");
+    if (!deckUtils) log("deck import: UIDeckUtils not found, names and banners are not applied");
+    if (!gameManager) log("deck import: GameManager not found, banners are not applied");
+
+    // Deck id -> the art hash the import chose, to put back if the deck editor overwrites it once.
+    const artFixups = new Map<string, { id: any; hash: number }>();
+    let reapplying = false;
+
+    function findArtHash(bannerId: string): number {
+      const config = member((gameManager!.method("get_Instance") as any).invoke(), "Config");
+      for (const item of listItems(member(config, "DeckArt"))) {
+        const rid = member(item, "ResourceId");
+        let name = textOf(member(rid, "UniqueName"));
+        if (name === "") continue;
+        if (name.startsWith(ART_PREFIX)) name = name.substring(ART_PREFIX.length);
+        if (kebab(name) === bannerId) return Number(member(rid, "Id"));
+      }
+      return 0;
+    }
+
+    function applyName(inv: Il2Cpp.Object, deck: any, name: string): string {
+      if (name.length === 0) return "none";
+      let max = 24;
+      try { max = Number(inventoryClass.field("MaxDeckNameLength_").value); } catch (_) {}
+      if (name.length > max) name = name.substring(0, max);
+      const decks = member(member(inv, "InventoryDescription"), "decks");
+      name = textOf((deckUtils!.method("GetValidDeckName", 3) as any).invoke(deck, decks, Il2Cpp.string(name)));
+      (inv.method("RenameDeck", 3) as any).invoke(deck.field("id").value, Il2Cpp.string(name), true);
+      return `'${name}'`;
+    }
+
+    function applyBanner(inv: Il2Cpp.Object, deck: any, bannerId: string | null): string {
+      if (bannerId == null) return "none";
+      if (!gameManager) return "skipped (GameManager not found)";
+      const hash = findArtHash(bannerId);
+      if (hash === 0) { log(`deck import: unknown deck art id '${bannerId}', banner skipped`); return `skipped (unknown id '${bannerId}')`; }
+      const id = deck.field("id").value;
+      (inv.method("SetArtTypeHash", 2) as any).invoke(id, hash);
+      if (deckUtils) {
+        let invalid = 0;
+        try { if (resourceId) invalid = Number(member((resourceId.method("GetInvalid") as any).invoke(), "Id")); } catch (_) {}
+        const display = (deckUtils.method("GetDeckDisplayDataByClass", 1) as any).invoke(deck);
+        if (!isNull(display) && Number(display.field("ArtId").value) !== invalid) artFixups.set(idKey(id), { id, hash });
+      }
+      return `'${bannerId}' (hash ${hash})`;
+    }
+
+    // Inventory.ImportDeckFromClipboard
+    if (!importMethod) { log("deck import: Inventory.ImportDeckFromClipboard not found"); return; }
+    Interceptor.attach(importMethod.virtualAddress, {
+      onEnter(args) {
+        this.swapped = [];
+        this.gcOff = false;
+        try {
+          // The game's loop over card.alternates must see an empty list for a base card with spare copies. Harmony rewrites the read, here the field is swapped for the call and put back afterwards.
+          try { (Il2Cpp as any).gc.disable(); this.gcOff = true; } catch (_) {}
+          const inv = new Il2Cpp.Object(args[0]);
+          const cards = listItems(member(member(inv, "InventoryDescription"), "cardTypes"));
+          let empty: any = null;
+          for (const card of cards) {
+            const alternates = card.field("alternates").value;
+            if (isNull(alternates) || Number(alternates.field("_size").value) === 0) continue;
+            const spareRegular = Number(card.field("numRegular").value) - Number(card.field("numRegularUsedInDeck").value);
+            const sparePremium = Number(card.field("numPremium").value) - Number(card.field("numPremiumUsedInDeck").value);
+            if (!(spareRegular <= 0 ? sparePremium > 0 : true)) continue;
+            if (!empty) empty = newWith(alternates.class);
+            card.field("alternates").value = empty;
+            this.swapped.push([card, alternates]);
+          }
+        } catch (e) { log(`deck import: alt art swap failed: ${e}`); }
+        this.inv = args[0];
+      },
+      onLeave(retval) {
+        const swapped: any[] = this.swapped ?? [];
+        for (const [card, alternates] of swapped) {
+          try { card.field("alternates").value = alternates; } catch (e) { log(`deck import: could not restore alternates: ${e}`); }
+        }
+        if (this.gcOff) { try { (Il2Cpp as any).gc.enable(); } catch (_) {} }
+        try {
+          if ((retval.toInt32() & 0xff) === 0) return;
+          log(`deck import: ${swapped.length} cards kept the base art`);
+          if (!uniClipboard || !deckUtils) return;
+          const parsed = tryParse(textOf((uniClipboard.method("GetText", 0) as any).invoke()));
+          if (!parsed) return;
+          const inv = new Il2Cpp.Object(this.inv);
+          const deck = call(inv, "GetActiveDeck");
+          if (isNull(deck)) return;
+          const name = applyName(inv, deck, parsed.name);
+          const banner = applyBanner(inv, deck, parsed.bannerId);
+          log(`deck import: name ${name}, banner ${banner}`);
+        } catch (e) { log(`deck import: name and banner failed: ${e}`); }
+      },
+    });
+
+    // Inventory.SetArtTypeHash: the deck editor sets the art once more after the import, which would drop the banner.
+    if (!setArtMethod) { log("deck import: Inventory.SetArtTypeHash not found, the banner may be overwritten by the deck editor"); return; }
+    Interceptor.attach(setArtMethod.virtualAddress, {
+      onEnter(args) { this.inv = args[0]; this.key = idKey(args[1]); this.hash = args[2].toInt32(); },
+      onLeave() {
+        try {
+          if (reapplying) return;
+          const fix = artFixups.get(this.key);
+          if (!fix) return;
+          artFixups.delete(this.key);
+          if (fix.hash === this.hash) return;
+          reapplying = true;
+          try { (new Il2Cpp.Object(this.inv).method("SetArtTypeHash", 2) as any).invoke(fix.id, fix.hash); }
+          finally { reapplying = false; }
+          log(`deck import: banner hash ${fix.hash} put back after the editor set ${this.hash}`);
+        } catch (e) { log(`deck import: SetArtTypeHash hook failed: ${e}`); }
+      },
+    });
   });
 
   // ---------------------------------------------------------------------
