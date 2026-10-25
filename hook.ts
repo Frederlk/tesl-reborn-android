@@ -142,7 +142,7 @@ const CREATE_ACCOUNT = false;            // the plugin sends false; flip to true
 
 Il2Cpp.perform(() => {
   const img = Il2Cpp.domain.assembly("Assembly-CSharp").image;
-  log(`attached, Unity ${Il2Cpp.unityVersion}, hook build plugin-parity-4`);
+  log(`attached, Unity ${Il2Cpp.unityVersion}, hook build plugin-parity-7`);
   // --- shared: the Steam-style requests the server accepts ---
   const utils = cls(img, "SparkleServices.HTTPUtils");
   const authResult = nested(img, "AuthBase", "AuthResult");
@@ -697,6 +697,23 @@ Il2Cpp.perform(() => {
     return boxed.unbox();
   }
 
+  // Unity's Vector2 and Color are value types: a setter takes one boxed struct, not separate numbers.
+  function vec2(x: number, y: number): Il2Cpp.ValueType {
+    const boxed = ucls("UnityEngine.Vector2").alloc();
+    boxed.field<number>("x").value = x;
+    boxed.field<number>("y").value = y;
+    return boxed.unbox();
+  }
+
+  function color(r: number, g: number, b: number, a: number): Il2Cpp.ValueType {
+    const boxed = ucls("UnityEngine.Color").alloc();
+    boxed.field<number>("r").value = r;
+    boxed.field<number>("g").value = g;
+    boxed.field<number>("b").value = b;
+    boxed.field<number>("a").value = a;
+    return boxed.unbox();
+  }
+
   // The base URL of one of the server's endpoints ("" when not logged in).
   function endpointUrl(kind: number): string {
     try {
@@ -951,17 +968,27 @@ Il2Cpp.perform(() => {
       const stats = deckStats.get(Number(call(tile, "GetDeckId")));
       const text = stats ? `${stats.wins}/${stats.losses} (${winRate(stats.wins, stats.losses)}%)` : "";
       (label.method("set_text") as any).invoke(Il2Cpp.string(text));
-      const labelObject = call(labelTransform, "gameObject");
+      if (stats) {
+        // The plate has no layout group, so it is sized from the text, as the desktop plugin does.
+        const containerRect = (container as any).method("GetComponent")
+          .overload("System.Type").invoke(ucls("UnityEngine.RectTransform").type.object) as Il2Cpp.Object;
+        const width = Number(call(label, "get_preferredWidth")) + 10;
+        const height = Number(call(label, "get_preferredHeight")) + 5;
+        if (!isNull(containerRect)) (containerRect.method("set_sizeDelta") as any).invoke(vec2(width, height));
+      }
+      const labelObject = call(labelTransform, "get_gameObject");
       if (!isNull(labelObject)) (labelObject.method("SetActive") as any).invoke(stats != null);
     } catch (e) { log(`deck tile label failed: ${e}`); }
   }
+
+  let labelSizeLogged = false;
 
   function createDeckTileLabel(tile: Il2Cpp.Object) {
     try {
       const nameText = tile.field<Il2Cpp.Object>("DeckNameText").value;
       if (isNull(nameText)) return;
-      const nameTransform = call(nameText, "get_transform");
-      const parent = call(nameTransform, "get_parent");
+      // The container hangs off the tile root: SetData looks it up there with Transform.Find, which only sees direct children.
+      const parent = call(tile, "get_transform");
       if (isNull(parent)) return;
 
       const gameObject = ucls("UnityEngine.GameObject");
@@ -974,10 +1001,10 @@ Il2Cpp.perform(() => {
       const containerRect = (container as any).method("GetComponent")
         .overload("System.Type").invoke(rectType.type.object) as Il2Cpp.Object;
       if (!isNull(containerRect)) {
-        (containerRect.method("set_anchorMin") as any).invoke(1, 0);
-        (containerRect.method("set_anchorMax") as any).invoke(1, 0);
-        (containerRect.method("set_pivot") as any).invoke(1, 0);
-        (containerRect.method("set_anchoredPosition") as any).invoke(-3, 2);
+        (containerRect.method("set_anchorMin") as any).invoke(vec2(1, 0));
+        (containerRect.method("set_anchorMax") as any).invoke(vec2(1, 0));
+        (containerRect.method("set_pivot") as any).invoke(vec2(1, 0));
+        (containerRect.method("set_anchoredPosition") as any).invoke(vec2(-3, 2));
       }
       // A black plate behind the numbers.
       const background = newWith(gameObject, Il2Cpp.string("Background"),
@@ -986,8 +1013,16 @@ Il2Cpp.perform(() => {
       (backgroundTransform.method("SetParent", 2) as any).invoke(containerTransform, false);
       const backgroundImage = (background as any).method("GetComponent")
         .overload("System.Type").invoke(ucls("UnityEngine.UI.Image").type.object) as Il2Cpp.Object;
+      const backgroundRect = (background as any).method("GetComponent")
+        .overload("System.Type").invoke(rectType.type.object) as Il2Cpp.Object;
+      if (!isNull(backgroundRect)) {
+        (backgroundRect.method("set_anchorMin") as any).invoke(vec2(0, 0));
+        (backgroundRect.method("set_anchorMax") as any).invoke(vec2(1, 1));
+        (backgroundRect.method("set_sizeDelta") as any).invoke(vec2(0, 0));
+        (backgroundRect.method("set_anchoredPosition") as any).invoke(vec2(0, 0));
+      }
       if (!isNull(backgroundImage)) {
-        (backgroundImage.method("set_color") as any).invoke(0, 0, 0, 0.7);
+        (backgroundImage.method("set_color") as any).invoke(color(0, 0, 0, 0.7));
         (backgroundImage.method("set_raycastTarget") as any).invoke(false);
       }
       // The label itself is a copy of the deck name text, so it uses the
@@ -1000,18 +1035,25 @@ Il2Cpp.perform(() => {
       if (isNull(label)) return;
       (label.method("set_name") as any).invoke(Il2Cpp.string("WinLossRatioLabel"));
       (label.method("set_alignment") as any).invoke(5);            // MiddleRight
-      (label.method("set_fontSize") as any).invoke(16);
+      // The desktop plugin uses 16, which is tiny on a phone canvas: scale up from the name text the label was cloned from.
+      const nameSize = Number(call(label, "get_fontSize"));
+      const labelSize = Math.max(16, Math.round(nameSize * 1.3));
+      if (!labelSizeLogged) { labelSizeLogged = true; log(`deck tile label font size ${nameSize} -> ${labelSize}`); }
+      (label.method("set_fontSize") as any).invoke(labelSize);
       (label.method("set_horizontalOverflow") as any).invoke(1);   // Wrap
       (label.method("set_verticalOverflow") as any).invoke(1);     // Truncate
       (label.method("set_raycastTarget") as any).invoke(false);
       const labelRect = call(label, "get_rectTransform");   // Graphic.rectTransform
       if (!isNull(labelRect)) {
-        (labelRect.method("set_anchorMin") as any).invoke(0, 0);
-        (labelRect.method("set_anchorMax") as any).invoke(1, 1);
-        (labelRect.method("set_offsetMin") as any).invoke(5, 2.5);
-        (labelRect.method("set_offsetMax") as any).invoke(-5, -2.5);
+        (labelRect.method("set_anchorMin") as any).invoke(vec2(0, 0));
+        (labelRect.method("set_anchorMax") as any).invoke(vec2(1, 1));
+        (labelRect.method("set_pivot") as any).invoke(vec2(0.5, 0.5));
+        (labelRect.method("set_anchoredPosition") as any).invoke(vec2(0, 0));
+        (labelRect.method("set_sizeDelta") as any).invoke(vec2(0, 0));
+        (labelRect.method("set_offsetMin") as any).invoke(vec2(5, 2.5));
+        (labelRect.method("set_offsetMax") as any).invoke(vec2(-5, -2.5));
       }
-      const labelObject = call(label, "gameObject");
+      const labelObject = call(label, "get_gameObject");
       if (!isNull(labelObject)) (labelObject.method("SetActive") as any).invoke(false);
     } catch (e) { log(`deck tile label creation failed: ${e}`); }
   }
